@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <title>AgroSync – Piantagione & Recinzione (Google Maps)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Turf.js per le operazioni geospaziali -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #151925;
+      --muted: #98a2b3;
+      --text: #e6e8ee;
+      --accent: #7c9cff;
+      --ok: #56d364;
+      --warn: #ffb454;
+      --err: #ff6b6b;
+      --border: #22304a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      line-height: 1.35;
+    }
+    header {
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #121725, #0f1115);
+      position: sticky; top: 0; z-index: 10;
+      display: flex; align-items: center; gap: 12px;
+    }
+    header h1 { margin: 0; font-size: 18px; letter-spacing: .4px; }
+    header small { color: var(--muted); }
+    .wrap {
+      display: grid; grid-template-columns: 440px 1fr; gap: 14px; padding: 14px;
+      height: calc(100vh - 58px);
+    }
+    aside {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+      padding: 14px; overflow: auto;
+    }
+    .field { margin-bottom: 12px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    textarea, input, select {
+      width: 100%; border-radius: 12px; border: 1px solid var(--border);
+      background: #0d1220; color: var(--text); padding: 10px 12px; outline: none;
+    }
+    textarea { min-height: 90px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .btn {
+      width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
+      background: #0d1220; color: var(--text); cursor: pointer; font-weight: 600;
+      transition: .15s transform ease, .2s background ease;
+    }
+    .btn:hover { transform: translateY(-1px); background: #0f1528; }
+    .btn.primary { background: var(--accent); border-color: transparent; color: #0b1020; }
+    .btn.primary:hover { filter: brightness(1.04); }
+    .btn.ghost { background: transparent; }
+    .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .note { font-size: 12px; color: var(--muted); }
+    .stat {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;
+    }
+    .card {
+      border: 1px solid var(--border); border-radius: 12px; padding: 10px;
+      background: #0d1220;
+    }
+    .card h4 { margin: 0 0 8px; font-size: 13px; color: #c7d2fe; }
+    .value { font-size: 18px; font-weight: 700; }
+    .tag { font-size: 11px; color: var(--muted); }
+    .warn { color: var(--warn); }
+    .err  { color: var(--err); }
+    #map { width: 100%; height: 100%; border: 1px solid var(--border); border-radius: 16px; }
+    .pill {
+      display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 11px;
+      border: 1px solid var(--border); color: var(--muted); margin-left: 6px;
+    }
+    .legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .dot.border { background: #2b3756; }
+    .dot.work   { background: #365a20; }
+    .dot.point  { background: #9cc3ff; }
+    .dot.gps    { background: #56d364; }
+    .hr { height: 1px; background: var(--border); margin: 12px 0; opacity: .6; }
+    .hidden { display: none; }
+    #maps-warning {
+      position: fixed; bottom: 12px; left: 12px; right: 12px; 
+      border: 1px solid var(--border); background:#241b1b; color:#ffdede;
+      padding: 10px 12px; border-radius: 10px; font-size: 12px; display:none;
+    }
+    #maps-warning b{color:#ff8a8a}
+
+    /* === Conferma/piantato UI === */
+    #confirmBar {
+      position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+      background: #0d1220; color: #e6e8ee;
+      border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px;
+      display: none; gap: 10px; align-items: center; z-index: 99999;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      font-size: 14px;
+    }
+    #confirmBar .actions { display: flex; gap: 8px; }
+    #confirmBar .btn-sm {
+      padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border);
+      background: #12192b; color: #e6e8ee; cursor: pointer; font-weight: 600;
+    }
+    #confirmBar .btn-sm.ok { background: var(--ok); border-color: transparent; color: #0b1020; }
+    #confirmBar .btn-sm:hover { filter: brightness(1.05); }
+
+    .dot.done { background: #ff6b6b; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AgroSync – Piantagione & Recinzione <small class="pill">Demo locale</small></h1>
+    <small id="gpsStatus" class="pill">GPS: inattivo</small>
+  </header>
+
+  <div class="wrap">
+    <aside>
+      <div class="field">
+        <label>Modalità</label>
+        <select id="mode">
+          <option value="planting">Piantagione (griglia)</option>
+          <option value="fence">Recinzione (solo bordo)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Coordinate del terreno (una per riga: <code>lat,lng</code>)</label>
+        <textarea id="coords" placeholder="Esempio:
+38.90550,16.58672
+38.90521,16.58902
+38.90394,16.58846"></textarea>
+        <div class="note">Puoi anche <b>cliccare sulla mappa</b> per aggiungere vertici. Minimo 3 punti.</div>
+      </div>
+
+      <!-- Parametri PIANTAGIONE -->
+      <div id="plantingParams">
+        <div class="row">
+          <div class="field">
+            <label>Distanza tra piante (metri)</label>
+            <input type="number" id="spacing" value="6" min="0.5" step="0.1">
+          </div>
+          <div class="field">
+            <label>Margine dal bordo (metri)</label>
+            <input type="number" id="margin" value="2" min="0" step="0.1">
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Orientamento griglia</label>
+            <select id="orientation">
+              <option value="edge">Allinea al primo lato del poligono</option>
+              <option value="north">Allinea Nord–Sud / Est–Ovest</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Limite massimo punti (performance)</label>
+            <input type="number" id="maxPoints" value="4000" min="100" step="100">
+          </div>
+        </div>
+      </div>
+
+      <!-- Parametri RECINZIONE -->
+      <div id="fenceParams" class="hidden">
+        <div class="row">
+          <div class="field">
+            <label>Distanza tra paletti (metri)</label>
+            <input type="number" id="fenceSpacing" value="4" min="0.5" step="0.1">
+          </div>
+          <div class="field">
+            <label>Opzioni recinzione</label>
+            <select id="fenceIncludeCorners">
+              <option value="yes" selected>Includi vertici (angoli)</option>
+              <option value="no">Solo punti equidistanti (no angoli)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn" id="btnAddFromMap">Aggiunta da mappa: <b>ATTIVA</b></button>
+        <button class="btn ghost" id="btnClear">Pulisci vertici</button>
+      </div>
+
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn primary" id="btnCompute">Calcola & Disegna</button>
+        <button class="btn" id="btnExport">Esporta CSV</button>
+      </div>
+
+      <div class="hr"></div>
+
+      <!-- GPS -->
+      <div class="row">
+        <button class="btn" id="btnGPS">Avvia GPS</button>
+        <button class="btn ghost" id="btnFollow" disabled>Segui posizione</button>
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <button class="btn" onclick="goFullscreen()">Schermo intero</button>
+      </div>
+
+      <div class="note" id="gpsInfo" style="margin-top:6px;">—</div>
+
+      <div class="hr"></div>
+
+      <!-- === NTRIP (via bridge WebSocket) === -->
+      <div class="card">
+        <h4>Correzione NTRIP (via Internet)</h4>
+
+        <div class="field">
+          <label>Bridge WebSocket</label>
+          <input id="ntripBridge" value="ws://localhost:8081">
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>Caster host</label>
+            <input id="ntripHost" placeholder="es. rtk2go.com">
+          </div>
+          <div class="field">
+            <label>Porta</label>
+            <input id="ntripPort" type="number" value="2101">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>Mountpoint</label>
+            <input id="ntripMount" placeholder="es. MOUNT1">
+          </div>
+          <div class="field">
+            <label>SSL</label>
+            <select id="ntripSSL">
+              <option value="no" selected>No</option>
+              <option value="yes">Sì (TLS)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>Username</label>
+            <input id="ntripUser">
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input id="ntripPass" type="password">
+          </div>
+        </div>
+
+        <div class="btn-row" style="margin-top:6px">
+          <button class="btn" id="btnNtrip">Connetti NTRIP</button>
+          <button class="btn ghost" id="btnNtripDis" disabled>Disconnetti</button>
+        </div>
+        <div class="note" id="ntripInfo">—</div>
+      </div>
+
+      <div class="legend" style="margin-top:10px">
+        <span><span class="dot border"></span>Terreno</span>
+        <span id="legendWork"><span class="dot work"></span>Area utile (bordo−margine)</span>
+        <span><span class="dot point"></span>Punti generati</span>
+        <span><span class="dot gps"></span>Posizione utente</span>
+        <span><span class="dot done"></span>Punti piantati</span>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="stat">
+        <div class="card">
+          <h4>Superficie Terreno</h4>
+          <div class="value" id="areaTot">—</div>
+          <div class="tag">m² (e ha)</div>
+        </div>
+        <div class="card">
+          <h4 id="metricTitle">Superficie Utile</h4>
+          <div class="value" id="metricValue">—</div>
+          <div class="tag" id="metricTag">m²</div>
+        </div>
+        <div class="card">
+          <h4>Punti Totali</h4>
+          <div class="value" id="pointCount">—</div>
+          <div class="tag">piante o paletti</div>
+        </div>
+        <div class="card">
+          <h4>Stato</h4>
+          <div id="status" class="tag">In attesa di calcolo…</div>
+        </div>
+      </div>
+    </aside>
+
+    <div id="map"></div>
+  </div>
+
+  <!-- Barra di conferma -->
+  <div id="confirmBar">
+    <span id="confirmText">Sei sul punto di piantagione. Confermi che è stato eseguito?</span>
+    <div class="actions">
+      <button class="btn-sm ok" id="btnConfirmYes">Sì, piantato</button>
+      <button class="btn-sm" id="btnConfirmNo">No</button>
+    </div>
+  </div>
+
+  <!-- Avviso Maps -->
+  <div id="maps-warning">
+    <b>Google Maps non si è caricato.</b> Controlla: API key valida, referrer <code>http://localhost/*</code>, API "Maps JavaScript" attiva e fatturazione abilitata. Apri Console (F12) per dettagli.
+  </div>
+
+  <!-- Beep via WebAudio: il contesto parte al click "Avvia GPS" -->
+  <script>
+    let audioCtx = null;
+    function beep(ms = 1000, freq = 880) {
+      try {
+        if (!audioCtx) return;
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.connect(g); g.connect(audioCtx.destination);
+        o.type = 'sine'; o.frequency.value = freq;
+        g.gain.value = 0.05;
+        o.start();
+        setTimeout(() => { o.stop(); }, ms);
+      } catch (e) {}
+    }
+  </script>
+
+  <script>
+    let map, drawPolygon, workPolygon, clickListener = null;
+    let vertexMarkers = [];
+    let pointsOverlay = null;
+    let currentPath = [];
+    let addFromMap = true;
+
+    // Ogni punto: { lat, lng, planted: false, key: "lat,lng" }
+    let lastPoints = [];
+    const promptedKeys = new Set();
+    let pendingPointKey = null;
+
+    let mode = 'planting';
+
+    // GPS (browser)
+    let watchId = null;
+    let followPos = false;
+    let userMarker = null;
+    let userAccuracy = null;
+
+    // === SERIAL GPS (Web Serial) ===
+    let serialPort = null;
+    let serialReader = null;
+    let serialAbort = null;
+    let serialActive = false;
+
+    // === NTRIP / Serial writer ===
+    let serialWriter = null;   // per inviare RTCM al modulo
+    let wsNtrip = null;        // WebSocket verso il bridge
+    let lastGgaAt = 0;         // throttle GGA
+
+    // Stato da NMEA + UBX
+    const serialState = {
+      // NMEA
+      lat:null, lng:null, spdKmh:null, course:null, alt:null,
+      fixQuality:null,       // GGA[6]
+      hdop:null, pdop:null, vdop:null, // GSA
+      gst: { sigmaE:null, sigmaN:null, sigmaU:null }, // GST
+      // UBX NAV-PVT (prioritario se presente)
+      ubx: {
+        hasFix:false, fixType:null, carrSoln:null, numSV:null,
+        lat:null, lng:null, hAcc:null, vAcc:null,
+        gSpeed:null, headMot:null
+      }
+    };
+
+    // Utilità
+    const $ = (id) => document.getElementById(id);
+    const fmt = (n) => new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(n);
+    const pointKey = (lat, lng) => `${lat.toFixed(6)},${lng.toFixed(6)}`;
+
+    function mergePlantedState(newArr, oldArr) {
+      const oldMap = new Map(oldArr.map(p => [pointKey(p.lat, p.lng), p.planted === true]));
+      newArr.forEach(p => {
+        const k = pointKey(p.lat, p.lng);
+        p.key = k;
+        p.planted = oldMap.get(k) || false;
+      });
+    }
+
+    // ======= FULLSCREEN =======
+    function goFullscreen(){
+      const el = document.documentElement;
+      if (!document.fullscreenElement && el.requestFullscreen) {
+        el.requestFullscreen().catch(()=>{});
+      }
+    }
+    function tryFullscreen() {
+      const el = document.documentElement;
+      if (!document.fullscreenElement && el.requestFullscreen) {
+        el.requestFullscreen().catch(()=>{});
+      }
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      setTimeout(tryFullscreen, 300);
+      const onceGo = () => { tryFullscreen(); document.removeEventListener('click', onceGo); document.removeEventListener('touchstart', onceGo); };
+      document.addEventListener('click', onceGo, { once: true });
+      document.addEventListener('touchstart', onceGo, { once: true });
+    });
+
+    // ======= UI conferma =======
+    function showConfirm(text, key) {
+      pendingPointKey = key;
+      $('confirmText').textContent = text || 'Sei sul punto di piantagione. Confermi che è stato eseguito?';
+      $('confirmBar').style.display = 'flex';
+    }
+    function hideConfirm() {
+      pendingPointKey = null;
+      $('confirmBar').style.display = 'none';
+    }
+
+    // ======= Inizializza mappa =======
+    window.initMap = function() {
+      class PointsOverlay extends google.maps.OverlayView {
+        constructor() {
+          super();
+          this.canvas = document.createElement('canvas');
+          this.canvas.style.position = 'absolute';
+          this.canvas.style.pointerEvents = 'none';
+          this.canvas.style.zIndex = '9999';
+          this.ctx = this.canvas.getContext('2d');
+          this.data = [];
+          this.pixelSize = 3;
+          this._boundsListener = null;
+        }
+        onAdd() {
+          const panes = this.getPanes();
+          panes.overlayLayer.appendChild(this.canvas);
+          const m = this.getMap();
+          this._boundsListener = m.addListener('idle', () => this.redraw());
+          m.addListener('drag', () => this.redraw());
+          m.addListener('zoom_changed', () => this.redraw());
+        }
+        onRemove() {
+          if (this.canvas && this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas);
+          if (this._boundsListener) this._boundsListener.remove();
+        }
+        setData(arr) { this.data = arr || []; this.redraw(); }
+        draw() { this.redraw(); }
+        redraw() {
+          const m = this.getMap();
+          if (!m) return;
+          const proj = this.getProjection();
+          const b = m.getBounds();
+          if (!proj || !b) return;
+
+          const sw = proj.fromLatLngToDivPixel(b.getSouthWest());
+          const ne = proj.fromLatLngToDivPixel(b.getNorthEast());
+          const width = Math.max(1, Math.floor(ne.x - sw.x));
+          const height = Math.max(1, Math.floor(sw.y - ne.y));
+
+          this.canvas.style.left = sw.x + 'px';
+          this.canvas.style.top = ne.y + 'px';
+          if (this.canvas.width !== width || this.canvas.height !== height) {
+            this.canvas.width = width; this.canvas.height = height;
+          }
+
+          const ctx = this.ctx;
+          ctx.clearRect(0, 0, width, height);
+
+          const zoom = this.getMap().getZoom() || 16;
+          let size = this.pixelSize;
+          if (zoom >= 20) size = this.pixelSize * 2.5;
+          const r = size * 0.5;
+
+          for (let i = 0; i < this.data.length; i++) {
+            const p = this.data[i];
+            const px = proj.fromLatLngToDivPixel(new google.maps.LatLng(p.lat, p.lng));
+            const x = px.x - sw.x;
+            const y = px.y - ne.y;
+            if (x >= -2 && x <= width + 2 && y >= -2 && y <= height + 2) {
+              ctx.beginPath();
+              ctx.arc(x, y, r, 0, Math.PI * 2);
+              ctx.fillStyle = p.planted ? '#ff6b6b' : '#9cc3ff';
+              ctx.fill();
+              ctx.lineWidth = 1;
+              ctx.strokeStyle = '#0b1020';
+              ctx.stroke();
+            }
+          }
+        }
+      }
+
+      map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: 38.905, lng: 16.588 },
+        zoom: 16,
+        mapTypeId: 'hybrid',
+        tilt: 0,
+        streetViewControl: false,
+        mapTypeControl: true,
+        fullscreenControl: true,
+      });
+
+      drawPolygon = new google.maps.Polygon({
+        paths: [], strokeColor: '#3d5afe', strokeOpacity: 0.9, strokeWeight: 2,
+        fillColor: '#2b3756', fillOpacity: 0.25, clickable: false, map, zIndex: 1
+      });
+      workPolygon = new google.maps.Polygon({
+        paths: [], strokeColor: '#7cd67a', strokeOpacity: 0.9, strokeWeight: 2,
+        fillColor: '#365a20', fillOpacity: 0.25, clickable: false, map, zIndex: 0
+      });
+
+      pointsOverlay = new PointsOverlay();
+      pointsOverlay.setMap(map);
+
+      enableMapClick(true);
+      bindUI();
+      updateModeUI();
+
+      document.getElementById('maps-warning').style.display = 'none';
+    };
+
+    function bindUI() {
+      $('mode').addEventListener('change', () => { mode = $('mode').value; updateModeUI(); });
+
+      $('btnAddFromMap').addEventListener('click', () => {
+        addFromMap = !addFromMap;
+        $('btnAddFromMap').innerHTML = addFromMap ? 'Aggiunta da mappa: <b>ATTIVA</b>' : 'Aggiunta da mappa: <b>SPENTA</b>';
+        enableMapClick(addFromMap);
+      });
+
+      $('btnClear').addEventListener('click', () => {
+        clearAll(); setStatus('Pulito. Inserisci nuovi vertici o clicca sulla mappa.');
+      });
+
+      $('btnCompute').addEventListener('click', () => {
+        parseTextareaIntoPath();
+        if (currentPath.length < 3) { setError('Inserisci almeno 3 vertici.'); return; }
+        if (mode === 'planting') computeAndRenderPlanting();
+        else computeAndRenderFence();
+      });
+
+      $('btnExport').addEventListener('click', () => {
+        if (!lastPoints.length) { setError('Nessun punto da esportare. Esegui il calcolo.'); return; }
+        exportCSV(lastPoints, mode === 'planting' ? 'punti_piantagione.csv' : 'punti_recinzione.csv');
+      });
+
+      $('coords').addEventListener('input', () => {
+        parseTextareaIntoPath();
+        renderVertices();
+      });
+
+      // GPS
+      $('btnGPS').addEventListener('click', toggleGPS);
+      $('btnFollow').addEventListener('click', () => {
+        followPos = !followPos;
+        $('btnFollow').textContent = followPos ? 'Segui posizione (ON)' : 'Segui posizione';
+      });
+
+      // Barra conferma
+      $('btnConfirmYes').addEventListener('click', () => {
+        if (!pendingPointKey) { hideConfirm(); return; }
+        const idx = lastPoints.findIndex(p => p.key === pendingPointKey);
+        if (idx >= 0) {
+          lastPoints[idx].planted = true;
+          pointsOverlay.setData(lastPoints);
+        }
+        hideConfirm();
+      });
+      $('btnConfirmNo').addEventListener('click', hideConfirm);
+
+      // NTRIP buttons
+      $('btnNtrip').addEventListener('click', connectNTRIP);
+      $('btnNtripDis').addEventListener('click', disconnectNTRIP);
+    }
+
+    function updateModeUI() {
+      const planting = mode === 'planting';
+      $('plantingParams').classList.toggle('hidden', !planting);
+      $('fenceParams').classList.toggle('hidden', planting);
+
+      $('legendWork').style.visibility = planting ? 'visible' : 'hidden';
+      $('metricTitle').textContent = planting ? 'Superficie Utile' : 'Perimetro Terreno';
+      $('metricTag').textContent   = planting ? 'm²' : 'metri';
+      $('metricValue').textContent = '—';
+      $('pointCount').textContent = '—';
+      setStatus('Modalità: ' + (planting ? 'Piantagione' : 'Recinzione') + '.');
+    }
+
+    function enableMapClick(on) {
+      if (clickListener) { clickListener.remove(); clickListener = null; }
+      if (on) {
+        clickListener = map.addListener('click', (ev) => {
+          const lat = ev.latLng.lat(), lng = ev.latLng.lng();
+          currentPath.push({ lat, lng });
+          appendToTextarea(lat, lng);
+          renderVertices();
+        });
+      }
+    }
+
+    function appendToTextarea(lat, lng) {
+      const t = $('coords');
+      const line = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+      t.value = (t.value.trim() ? (t.value.trim() + '\n') : '') + line;
+    }
+
+    function parseTextareaIntoPath() {
+      const lines = $('coords').value.split('\n').map(x => x.trim()).filter(Boolean);
+      const pts = [];
+      for (const line of lines) {
+        const parts = line.split(/[,;\s]+/).map(Number);
+        if (parts.length >= 2 && isFinite(parts[0]) && isFinite(parts[1])) {
+          pts.push({ lat: parts[0], lng: parts[1] });
+        }
+      }
+      currentPath = pts;
+    }
+
+    function clearAll() {
+      $('coords').value = '';
+      currentPath = [];
+      lastPoints = [];
+      promptedKeys.clear();
+      hideConfirm();
+      clearMarkers();
+      clearPointOverlay();
+      drawPolygon.setPath([]);
+      workPolygon.setPath([]);
+      $('areaTot').textContent = '—';
+      $('metricValue').textContent = '—';
+      $('pointCount').textContent = '—';
+    }
+
+    function clearMarkers() {
+      vertexMarkers.forEach(m => m.setMap(null));
+      vertexMarkers = [];
+    }
+    function clearPointOverlay() {
+      if (pointsOverlay) pointsOverlay.setData([]);
+    }
+
+    function renderVertices() {
+      clearMarkers();
+      drawPolygon.setPath(currentPath);
+      currentPath.forEach((p, i) => {
+        const m = new google.maps.Marker({
+          position: p,
+          label: String(i + 1),
+          map,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 5,
+            fillColor: '#9cc3ff',
+            fillOpacity: 1,
+            strokeColor: '#0b1020',
+            strokeWeight: 1
+          }
+        });
+        vertexMarkers.push(m);
+      });
+      if (currentPath.length) {
+        const bounds = new google.maps.LatLngBounds();
+        currentPath.forEach(p => bounds.extend(p));
+        map.fitBounds(bounds);
+      }
+    }
+
+    function setStatus(msg) { $('status').textContent = msg; $('status').className = 'tag'; }
+    function setWarn(msg) { $('status').textContent = msg; $('status').className = 'tag warn'; }
+    function setError(msg) { $('status').textContent = msg; $('status').className = 'tag err'; }
+
+    function toTurfPolygon(path) {
+      const ring = path.map(p => [p.lng, p.lat]);
+      const first = ring[0], last = ring[ring.length - 1];
+      if (!first || !last) return null;
+      if (first[0] !== last[0] || first[1] !== last[1]) ring.push([first[0], first[1]]);
+      return turf.polygon([ring]);
+    }
+
+    // ---------- PIANTAGIONE ----------
+    function computeAndRenderPlanting() {
+      try {
+        const spacing = Math.max(0.1, Number($('spacing').value));
+        const margin = Math.max(0, Number($('margin').value));
+        const orientation = $('orientation').value;
+        const maxPoints = Math.max(100, Number($('maxPoints').value));
+
+        const poly = toTurfPolygon(currentPath);
+        if (!poly) { setError('Poligono non valido.'); return; }
+
+        const areaTot_m2 = turf.area(poly);
+        $('areaTot').textContent = `${fmt(areaTot_m2)} m² (${fmt(areaTot_m2/10000)} ha)`;
+
+        let work = margin > 0 ? turf.buffer(poly, -margin, { units: 'meters', steps: 16 }) : poly;
+        if (!work || (work.geometry.type !== 'Polygon' && work.geometry.type !== 'MultiPolygon')) {
+          setWarn('Margine troppo grande: area utile nulla. Riduci il margine.');
+          workPolygon.setPath([]);
+          $('metricValue').textContent = '0';
+          $('pointCount').textContent = '0';
+          clearPointOverlay();
+          return;
+        }
+
+        if (work.geometry.type === 'MultiPolygon') {
+          let biggest = null, maxA = 0;
+          turf.flatten(work).features.forEach(f => {
+            const a = turf.area(f);
+            if (a > maxA) { maxA = a; biggest = f; }
+          });
+          work = biggest || turf.polygon([]);
+        }
+
+        const areaWork_m2 = turf.area(work);
+        $('metricValue').textContent = `${fmt(areaWork_m2)} m²`;
+
+        const centroid = turf.centroid(work);
+        let thetaDeg = 0;
+        if (orientation === 'edge' && currentPath.length >= 2) {
+          const p1 = currentPath[0], p2 = currentPath[1];
+          thetaDeg = turf.bearing([p1.lng, p1.lat], [p2.lng, p2.lat]);
+        } else {
+          thetaDeg = 0;
+        }
+
+        const workRot = turf.transformRotate(work, -thetaDeg, { pivot: centroid });
+
+        const bbox = turf.bbox(workRot);
+        let grid = turf.pointGrid(bbox, spacing, { units: 'meters' });
+
+        const bboxWidth = turf.distance([bbox[0], bbox[1]], [bbox[2], bbox[1]], {units:'meters'});
+        const bboxHeight = turf.distance([bbox[0], bbox[1]], [bbox[0], bbox[3]], {units:'meters'});
+        const bboxAreaApprox = bboxWidth * bboxHeight;
+        const ballpark = bboxAreaApprox / (spacing*spacing);
+        if (ballpark > maxPoints * 2) {
+          const factor = Math.sqrt(ballpark / (maxPoints * 1.2));
+          const newSpacing = spacing * factor;
+          grid = turf.pointGrid(bbox, newSpacing, { units: 'meters' });
+          setWarn(`Molti punti: spacing adattato ≈ ${fmt(newSpacing)} m per performance.`);
+        } else {
+          setStatus('Griglia generata.');
+        }
+
+        const inside = turf.pointsWithinPolygon(grid, workRot);
+        const ptsBack = turf.transformRotate(inside, thetaDeg, { pivot: centroid });
+
+        renderPolygons(poly, work);
+        renderPoints(ptsBack);
+
+        $('pointCount').textContent = fmt(ptsBack.features.length);
+        setStatus(`Piantagione completata: ${ptsBack.features.length} punti.`);
+      } catch (e) {
+        console.error(e);
+        setError('Errore nel calcolo (piantagione). Controlla i dati inseriti.');
+      }
+    }
+
+    // ---------- RECINZIONE ----------
+    function computeAndRenderFence() {
+      try {
+        const spacing = Math.max(0.1, Number($('fenceSpacing').value));
+        const includeCorners = $('fenceIncludeCorners').value === 'yes';
+
+        const poly = toTurfPolygon(currentPath);
+        if (!poly) { setError('Poligono non valido.'); return; }
+
+        const areaTot_m2 = turf.area(poly);
+        $('areaTot').textContent = `${fmt(areaTot_m2)} m² (${fmt(areaTot_m2/10000)} ha)`;
+
+        const polyLine = turf.polygonToLine(poly);
+        const perim_m = turf.length(polyLine, { units: 'kilometers' }) * 1000;
+        $('metricValue').textContent = `${fmt(perim_m)} m`;
+
+        const ring = poly.geometry.coordinates[0];
+        let coords = [];
+        for (let i = 0; i < ring.length - 1; i++) {
+          const A = ring[i], B = ring[i+1];
+          const seg = turf.lineString([A, B]);
+          const segLen_m = turf.length(seg, { units: 'kilometers' }) * 1000;
+
+          if (i === 0 && includeCorners) coords.push(A);
+
+          for (let d = spacing; d < segLen_m - 1e-6; d += spacing) {
+            const p = turf.along(seg, d / 1000, { units: 'kilometers' });
+            coords.push(p.geometry.coordinates);
+          }
+
+          if (includeCorners && i < ring.length - 2) coords.push(B);
+        }
+
+        const pts = turf.featureCollection(coords.map(([lng, lat]) => turf.point([lng, lat])));
+
+        renderPolygons(poly, null);
+        renderPoints(pts);
+
+        $('pointCount').textContent = fmt(pts.features.length);
+        setStatus(`Recinzione completata: ${pts.features.length} paletti generati.`);
+      } catch (e) {
+        console.error(e);
+        setError('Errore nel calcolo (recinzione). Controlla i dati inseriti.');
+      }
+    }
+
+    function renderPolygons(poly, work) {
+      const ring = poly.geometry.coordinates[0].map(([lng, lat]) => ({ lat, lng }));
+      drawPolygon.setPath(ring);
+
+      if (work) {
+        const paths = [];
+        if (work.geometry.type === 'Polygon') {
+          work.geometry.coordinates.forEach(r => paths.push(r.map(([lng, lat]) => ({ lat, lng }))));
+        } else if (work.geometry.type === 'MultiPolygon') {
+          work.geometry.coordinates.forEach(polyC => polyC.forEach(r => paths.push(r.map(([lng, lat]) => ({ lat, lng })))));
+        }
+        workPolygon.setPaths(paths);
+        workPolygon.setMap(map);
+      } else {
+        workPolygon.setPaths([]);
+        workPolygon.setMap(null);
+      }
+
+      const bounds = new google.maps.LatLngBounds();
+      ring.forEach(p => bounds.extend(p));
+      map.fitBounds(bounds);
+    }
+
+    function renderPoints(fcPoints) {
+      const fresh = [];
+      for (const f of fcPoints.features) {
+        const [lng, lat] = f.geometry.coordinates;
+        fresh.push({ lat, lng, planted: false, key: pointKey(lat, lng) });
+      }
+      mergePlantedState(fresh, lastPoints);
+      lastPoints = fresh;
+      if (pointsOverlay) pointsOverlay.setData(lastPoints);
+      promptedKeys.clear();
+      hideConfirm();
+      $('pointCount').textContent = fmt(lastPoints.length);
+    }
+
+    function exportCSV(points, filename) {
+      const header = 'lat,lng,planted\n';
+      const rows = points.map(p => `${p.lat},${p.lng},${p.planted ? 1 : 0}`).join('\n');
+      const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'punti.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // ---------- GPS: Browser o Serial ----------
+    function toggleGPS() {
+      if (watchId != null || serialActive) {
+        stopAllGPS();
+        return;
+      }
+      try { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+      if (!('serial' in navigator)) {
+        setError('Web Serial non disponibile. Apri via https:// o http://localhost con Chrome/Edge.');
+        return;
+      }
+      startSerialGPS().catch(err => {
+        if (err && err.name === 'NotFoundError') {
+          setWarn('Nessuna porta selezionata. GPS non avviato.');
+        } else {
+          setError('Errore porta seriale: ' + (err?.message || String(err)));
+        }
+      });
+    }
+
+    function stopAllGPS(){
+      if (watchId != null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      stopSerialGPS();
+
+      followPos = false;
+      $('btnFollow').disabled = true;
+      $('btnFollow').textContent = 'Segui posizione';
+      $('btnGPS').textContent = 'Avvia GPS';
+      $('gpsStatus').textContent = 'GPS: inattivo';
+      $('gpsInfo').textContent = '—';
+      if (userMarker) { userMarker.setMap(null); userMarker = null; }
+      if (userAccuracy) { userAccuracy.setMap(null); userAccuracy = null; }
+      hideConfirm();
+    }
+
+    // ===== Geolocalizzazione browser (se vuoi provarla manualmente) =====
+    function startBrowserGPS(){
+      if (!('geolocation' in navigator)) {
+        setError('Geolocalizzazione non supportata dal browser.');
+        return;
+      }
+      $('btnGPS').textContent = 'Ferma GPS';
+      $('gpsStatus').textContent = 'GPS: browser';
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const { latitude, longitude, accuracy } = pos.coords;
+          applyPosition({ lat: latitude, lng: longitude }, accuracy || 10);
+        },
+        (err) => {
+          setError('GPS errore: ' + err.message + (location.protocol !== 'https:' ? ' (usa HTTPS per sbloccare la geolocalizzazione)' : ''));
+          stopAllGPS();
+        },
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
+      );
+      $('btnFollow').disabled = false;
+    }
+
+    // ===== NMEA helpers =====
+    function nmeaToDecimal(ddmm, hemi){
+      if (ddmm == null) return null;
+      const str = String(ddmm).trim();
+      const dot = str.indexOf('.');
+      if (dot < 0) return null;
+      const intPart = str.slice(0, dot);
+      if (intPart.length < 3) return null;
+      const degLen = intPart.length - 2;
+      const deg = parseInt(intPart.slice(0, degLen), 10);
+      const min = parseFloat(str.slice(degLen));
+      if (!isFinite(deg) || !isFinite(min)) return null;
+      let dec = deg + (min / 60);
+      if (hemi === 'S' || hemi === 'W') dec = -dec;
+      return dec;
+    }
+    function nmeaNum(x){
+      const v = parseFloat(x);
+      if (!isFinite(v)) return null;
+      if (v === 0) return 0;
+      if (v >= 99) return null;
+      return v;
+    }
+    function parseNMEAline(line){
+      const s = line.trim();
+      if (!s.startsWith('$')) return;
+      const core = s.split('*')[0];
+      const p = core.split(',');
+      const type = p[0].slice(3);    // GGA / RMC / GSA / GST
+
+      if (type === 'RMC') {
+        const valid = p[2] === 'A';
+        const lat = nmeaToDecimal(p[3], p[4]);
+        const lng = nmeaToDecimal(p[5], p[6]);
+        const sog_knots = parseFloat(p[7] || '0');
+        const cog = parseFloat(p[8] || '');
+        if (valid && lat != null && lng != null &&
+            lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+          serialState.lat = lat; serialState.lng = lng;
+        }
+        if (isFinite(sog_knots)) serialState.spdKmh = sog_knots * 1.852;
+        if (isFinite(cog)) serialState.course = cog;
+      }
+      else if (type === 'GGA') {
+        serialState.fixQuality = parseInt(p[6] || '0', 10);
+        const hd = nmeaNum(p[8]);
+        if (hd != null) serialState.hdop = hd;
+        const alt = parseFloat(p[9] || '');
+        if (isFinite(alt)) serialState.alt = alt;
+      }
+      else if (type === 'GSA') {
+        const pd = nmeaNum(p[15]);
+        const hd = nmeaNum(p[16]);
+        const vd = nmeaNum(p[17]);
+        if (pd != null) serialState.pdop = pd;
+        if (hd != null) serialState.hdop = hd;
+        if (vd != null) serialState.vdop = vd;
+      }
+      else if (type === 'GST') {
+        const sigmaLat  = nmeaNum(p[6]);
+        const sigmaLong = nmeaNum(p[7]);
+        const sigmaAlt  = nmeaNum(p[8]);
+        if (sigmaLat != null)  serialState.gst.sigmaN = sigmaLat;
+        if (sigmaLong != null) serialState.gst.sigmaE = sigmaLong;
+        if (sigmaAlt != null)  serialState.gst.sigmaU = sigmaAlt;
+      }
+    }
+
+    // ====== UBX NAV-PVT parser (BINARIO) ======
+    const UBX = {
+      SYNC1: 0xB5, SYNC2: 0x62,
+      CLASS_NAV: 0x01, ID_PVT: 0x07
+    };
+    const ubxState = { step:0, cls:0, id:0, len:0, pay:[], ckA:0, ckB:0 };
+
+    function ubxReset(){ ubxState.step=0; ubxState.len=0; ubxState.pay=[]; ubxState.ckA=0; ubxState.ckB=0; }
+    function ubxFeedByte(b){
+      switch(ubxState.step){
+        case 0: if (b===UBX.SYNC1) ubxState.step=1; else ubxReset(); break;
+        case 1: if (b===UBX.SYNC2) ubxState.step=2; else ubxReset(); break;
+        case 2: ubxState.cls=b; ubxState.ckA=0; ubxState.ckB=0; ubxAddChk(b); ubxState.step=3; break;
+        case 3: ubxState.id=b; ubxAddChk(b); ubxState.step=4; break;
+        case 4: ubxState.len = b; ubxAddChk(b); ubxState.step=5; break;
+        case 5: ubxState.len |= (b<<8); ubxAddChk(b); ubxState.pay=[]; ubxState.step = ubxState.len?6:7; break;
+        case 6:
+          ubxState.pay.push(b); ubxAddChk(b);
+          if (ubxState.pay.length>=ubxState.len) ubxState.step=7;
+          break;
+        case 7: // CK_A
+          if (b !== ubxState.ckA) { ubxReset(); break; }
+          ubxState.step=8; break;
+        case 8: // CK_B
+          if (b !== ubxState.ckB) { ubxReset(); break; }
+          // frame valido
+          ubxHandleFrame(ubxState.cls, ubxState.id, ubxState.pay);
+          ubxReset();
+          break;
+      }
+    }
+    function ubxAddChk(b){ ubxState.ckA = (ubxState.ckA + b) & 0xFF; ubxState.ckB = (ubxState.ckB + ubxState.ckA) & 0xFF; }
+
+    function rdU1(p,i){ return p[i] & 0xFF; }
+    function rdI4(p,i){ let v = p[i] | (p[i+1]<<8) | (p[i+2]<<16) | (p[i+3]<<24); return v | 0; }
+    function rdU2(p,i){ return (p[i] | (p[i+1]<<8)) & 0xFFFF; }
+    function rdU4(p,i){ return (p[i] | (p[i+1]<<8) | (p[i+2]<<16) | (p[i+3]<<24) ) >>> 0; }
+
+    function ubxHandleFrame(cls,id,pay){
+      if (cls===UBX.CLASS_NAV && id===UBX.ID_PVT){
+        // NAV-PVT layout (v27+)
+        const fixType = rdU1(pay,20);          // 0..5
+        const flags   = rdU1(pay,21);
+        const numSV   = rdU1(pay,23);
+        const lon1e7  = rdI4(pay,24);
+        const lat1e7  = rdI4(pay,28);
+        const hAccmm  = rdU4(pay,40);          // mm
+        const vAccmm  = rdU4(pay,44);          // mm
+        const gSpeed  = rdI4(pay,60);          // mm/s
+        const headMot = rdI4(pay,64);          // 1e-5 deg
+
+        const carrSoln = (flags >> 6) & 0x03;  // 0 none,1 float,2 fixed
+        const hasFix = (fixType>=2);           // 2D/3D/DR ecc.
+
+        serialState.ubx.hasFix   = hasFix;
+        serialState.ubx.fixType  = fixType;
+        serialState.ubx.carrSoln = carrSoln;
+        serialState.ubx.numSV    = numSV;
+        serialState.ubx.lat      = lat1e7 / 1e7;
+        serialState.ubx.lng      = lon1e7 / 1e7;
+        serialState.ubx.hAcc     = hAccmm / 1000;   // → metri
+        serialState.ubx.vAcc     = vAccmm / 1000;
+        serialState.ubx.gSpeed   = gSpeed * 0.0036; // mm/s → km/h
+        serialState.ubx.headMot  = headMot / 100000;
+
+        // Aggiorna subito la posizione preferendo UBX
+        if (hasFix && isFinite(serialState.ubx.lat) && isFinite(serialState.ubx.lng)) {
+          $('gpsStatus').textContent = 'GPS: seriale (UBX)';
+          const acc = estimateSerialAccuracy(); // userà hAcc se presente
+          applyPosition({ lat: serialState.ubx.lat, lng: serialState.ubx.lng }, acc);
+        }
+      }
+    }
+
+    // Accuratezza: preferisci UBX.hAcc, poi GST, poi HDOP×UERE
+    function estimateSerialAccuracy(){
+      if (serialState.ubx.hasFix && serialState.ubx.hAcc != null && isFinite(serialState.ubx.hAcc)) {
+        return Math.max(0.3, Math.min(serialState.ubx.hAcc, 10)); // clamp 0.3..10 m
+      }
+      const sE = serialState.gst.sigmaE;
+      const sN = serialState.gst.sigmaN;
+      if (sE != null && sN != null) {
+        const cep95 = 2.146 * Math.sqrt(sE*sE + sN*sN);
+        return Math.max(0.5, Math.min(cep95, 15));
+      }
+      const fq = serialState.fixQuality;
+      let uere = 5;
+      if (fq === 2) uere = 3;
+      else if (fq === 4) uere = 0.02;
+      else if (fq === 5) uere = 0.1;
+      const hd = serialState.hdop ?? serialState.pdop ?? null;
+      if (hd != null) {
+        const acc = hd * uere;
+        return Math.max(0.5, Math.min(acc, 15));
+      }
+      return 8;
+    }
+
+    // ======== Avvio seriale: lettura byte-level (UBX + NMEA) ========
+    async function startSerialGPS(){
+      if (!('serial' in navigator)) { throw new Error('Web Serial non supportato'); }
+      if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+
+      serialPort = await navigator.serial.requestPort();
+      // === BaudRate a 115200 per sostenere il flusso RTCM ===
+      await serialPort.open({ baudRate: 115200 });
+
+      // === Writer per inviare RTCM al modulo ===
+      serialWriter = serialPort.writable.getWriter();
+
+      serialAbort = new AbortController();
+      serialReader = serialPort.readable.getReader();
+
+      serialActive = true;
+      $('btnGPS').textContent = 'Ferma GPS';
+      $('gpsStatus').textContent = 'GPS: seriale';
+      $('btnFollow').disabled = false;
+
+      (async () => {
+        ubxReset();
+        let lineBuf = '';
+        while (serialActive) {
+          const { value, done } = await serialReader.read();
+          if (done || !value) break;
+          // value è Uint8Array
+          for (let i=0;i<value.length;i++){
+            const b = value[i];
+
+            // UBX feed
+            ubxFeedByte(b);
+
+            // NMEA ASCII feed (accetta solo stampabili e CR/LF)
+            if (b === 10) { // LF
+              const line = lineBuf.trim();
+              lineBuf = '';
+              if (line.startsWith('$')) {
+                try { parseNMEAline(line); } catch(_) {}
+                // se non ho UBX valido, applico da NMEA
+                if (!(serialState.ubx.hasFix && serialState.ubx.lat!=null && serialState.ubx.lng!=null)) {
+                  if (serialState.lat!=null && serialState.lng!=null) {
+                    const acc = estimateSerialAccuracy();
+                    applyPosition({ lat: serialState.lat, lng: serialState.lng }, acc);
+                  }
+                }
+              }
+            } else if (b !== 13) { // ignora CR
+              if (b >= 0x20 && b <= 0x7E || b===0x24 || b===0x2C) { // stampabili
+                lineBuf += String.fromCharCode(b);
+              }
+            }
+          }
+        }
+      })().catch(()=>{});
+
+      return true;
+    }
+
+    async function stopSerialGPS(){
+      try{
+        serialActive = false;
+
+        if (serialReader) {
+          try{ await serialReader.cancel(); }catch(_){}
+          try{ serialReader.releaseLock(); }catch(_){}
+          serialReader = null;
+        }
+
+        // === Rilascia il writer (fondamentale per riconnettersi) ===
+        if (serialWriter) {
+          try { serialWriter.releaseLock(); } catch (_){}
+          serialWriter = null;
+        }
+
+        if (serialAbort) { serialAbort.abort(); serialAbort = null; }
+        if (serialPort)  { try{ await serialPort.close(); }catch(_){}
+          serialPort = null; }
+      }catch(_){}
+    }
+
+    // ======== NTRIP: GGA builder e invio al bridge ========
+    function toNmeaDM(value, isLat) {
+      const sign = value >= 0 ? 1 : -1;
+      const v = Math.abs(value);
+      const deg = Math.floor(v);
+      const min = (v - deg) * 60;
+      const dd = isLat ? String(deg).padStart(2, '0') : String(deg).padStart(3, '0');
+      return { dm: `${dd}${min.toFixed(4).padStart(7,'0')}`, hemi: isLat ? (sign>=0?'N':'S') : (sign>=0?'E':'W') };
+    }
+    function nmeaChecksum(sentenceNoDollar) {
+      let c = 0; for (let i=0; i<sentenceNoDollar.length; i++) c ^= sentenceNoDollar.charCodeAt(i);
+      return c.toString(16).toUpperCase().padStart(2, '0');
+    }
+    function buildGGA(lat, lon, alt=0) {
+      const t = new Date();
+      const hh = String(t.getUTCHours()).padStart(2,'0');
+      const mm = String(t.getUTCMinutes()).padStart(2,'0');
+      const ss = String(t.getUTCSeconds()).padStart(2,'0');
+      const time = `${hh}${mm}${ss}`;
+      const la = toNmeaDM(lat, true);
+      const lo = toNmeaDM(lon, false);
+      const fixQ = 1;      // qualità generica
+      const sats = 12;
+      const hdop = 1.0;
+      const geoid = 0.0;
+      const core = `GPGGA,${time},${la.dm},${la.hemi},${lo.dm},${lo.hemi},${fixQ},${sats},${hdop.toFixed(1)},${alt.toFixed(1)},M,${geoid.toFixed(1)},M,,`;
+      const cs = nmeaChecksum(core);
+      return `$${core}*${cs}`;
+    }
+    function sendGGAtoBridge(lat, lng, alt=0) {
+      if (!wsNtrip || wsNtrip.readyState !== 1) return;
+      const now = Date.now();
+      if (now - lastGgaAt < 5000) return; // max 1/5s
+      lastGgaAt = now;
+      const gga = buildGGA(lat, lng, alt);
+      try { wsNtrip.send(JSON.stringify({ type: 'gga', sentence: gga })); } catch(_){}
+    }
+
+    // Applica aggiornamento posizione
+    function applyPosition(latlng, accuracy){
+      if (!userMarker) {
+        userMarker = new google.maps.Marker({
+          position: latlng, map,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 6,
+            fillColor: '#56d364',
+            fillOpacity: 1,
+            strokeColor: '#0b1020',
+            strokeWeight: 1
+          },
+          zIndex: google.maps.Marker.MAX_ZINDEX + 2000
+        });
+        userAccuracy = new google.maps.Circle({
+          map,
+          center: latlng,
+          radius: accuracy || 10,
+          strokeColor: '#56d364',
+          strokeOpacity: 0.4,
+          strokeWeight: 1,
+          fillColor: '#56d364',
+          fillOpacity: 0.1,
+          zIndex: 5
+        });
+      } else {
+        userMarker.setPosition(latlng);
+        userAccuracy.setCenter(latlng);
+        userAccuracy.setRadius(accuracy || 10);
+      }
+
+      // Invio GGA al caster (via bridge) usando alt se disponibile
+      const alt = (serialState?.alt != null && isFinite(serialState.alt)) ? serialState.alt : 0;
+      sendGGAtoBridge(latlng.lat, latlng.lng, alt);
+
+      $('gpsInfo').textContent = `Lat: ${latlng.lat.toFixed(6)}  Lng: ${latlng.lng.toFixed(6)}  ±${Math.round(accuracy || 10)} m`;
+      if (followPos) map.panTo(latlng);
+
+      checkProximity(latlng, accuracy);
+    }
+
+    function checkProximity(latlng, accuracy = 0) {
+      if (!lastPoints.length) return;
+
+      const baseRadius = Math.max(0.5, Number($('confirmRadius').value) || 3);
+      const allowAuto = $('autoConfirm').value === 'yes';
+      const radius = allowAuto ? Math.min(baseRadius, Math.max(1, accuracy || baseRadius)) : baseRadius;
+
+      const here = new google.maps.LatLng(latlng.lat, latlng.lng);
+      let nearest = null, nearestDist = Infinity;
+      for (const p of lastPoints) {
+        if (p.planted) continue;
+        const d = google.maps.geometry.spherical.computeDistanceBetween(
+          here, new google.maps.LatLng(p.lat, p.lng)
+        );
+        if (d < nearestDist) { nearestDist = d; nearest = p; }
+      }
+      if (!nearest || nearestDist > radius) return;
+
+      if (promptedKeys.has(nearest.key)) return;
+      promptedKeys.add(nearest.key);
+
+      if (navigator.vibrate) navigator.vibrate([220, 100, 220]);
+      beep(180, 920);
+
+      if (allowAuto && nearestDist <= (accuracy || radius)) {
+        nearest.planted = true;
+        pointsOverlay.setData(lastPoints);
+        return;
+      }
+
+      showConfirm(`Sei sul punto (dist. ~${fmt(nearestDist)} m). Confermi che è stato piantato?`, nearest.key);
+    }
+
+    // ======== NTRIP: connessione al bridge e inoltro RTCM → seriale ========
+    function connectNTRIP() {
+      const bridgeURL = $('ntripBridge').value.trim() || 'ws://localhost:8081';
+      const host = $('ntripHost').value.trim();
+      const port = Number($('ntripPort').value) || 2101;
+      const mount = $('ntripMount').value.trim();
+      const user = $('ntripUser').value;
+      const pass = $('ntripPass').value;
+      const ssl  = $('ntripSSL').value === 'yes';
+
+      if (!host || !mount) { $('ntripInfo').textContent = 'Compila host e mountpoint.'; return; }
+      if (!serialWriter) { $('ntripInfo').textContent = 'Avvia prima il GPS seriale (porta) per ricevere RTCM.'; }
+
+      wsNtrip = new WebSocket(bridgeURL);
+      wsNtrip.binaryType = 'arraybuffer';
+
+      wsNtrip.onopen = () => {
+        $('ntripInfo').textContent = 'Bridge connesso: contatto il caster…';
+        $('btnNtrip').disabled = true; $('btnNtripDis').disabled = false;
+        wsNtrip.send(JSON.stringify({ type:'connect', host, port, mountpoint:mount, user, password:pass, ssl }));
+      };
+      wsNtrip.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) {
+          // Bytes RTCM → modulo GNSS
+          const bytes = new Uint8Array(ev.data);
+          if (serialWriter) serialWriter.write(bytes).catch(()=>{});
+        } else {
+          try {
+            const obj = JSON.parse(ev.data);
+            if (obj.type === 'status') $('ntripInfo').textContent = `NTRIP: ${obj.message}`;
+            if (obj.type === 'error')  $('ntripInfo').textContent = `NTRIP ERRORE: ${obj.message}`;
+          } catch(_){}
+        }
+      };
+      wsNtrip.onclose = () => {
+        $('ntripInfo').textContent = 'NTRIP disconnesso';
+        $('btnNtrip').disabled = false; $('btnNtripDis').disabled = true;
+      };
+      wsNtrip.onerror = () => { $('ntripInfo').textContent = 'Errore WebSocket bridge'; };
+    }
+
+    function disconnectNTRIP() {
+      if (wsNtrip && wsNtrip.readyState <= 1) {
+        try { wsNtrip.send(JSON.stringify({ type:'disconnect' })); } catch(_){}
+        try { wsNtrip.close(); } catch(_){}
+      }
+      wsNtrip = null;
+      $('btnNtrip').disabled = false; $('btnNtripDis').disabled = true;
+    }
+
+    setTimeout(() => {
+      if (!window.google || !window.google.maps || !map) {
+        document.getElementById('maps-warning').style.display = 'block';
+      }
+    }, 3000);
+  </script>
+
+  <!-- Google Maps per ultimo -->
+  <script defer
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAe9AUnq_bbNoVnnjB9OPB7nyGGgPaBthM&libraries=geometry&v=quarterly&callback=initMap">
+  </script>
+</body>
+</html>

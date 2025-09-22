@@ -1,0 +1,11 @@
+{
+  "name": "ntrip-bridge",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "dependencies": {
+    "ws": "^8.17.0"
+  },
+  "scripts": {
+    "start": "node ntrip-bridge.js"
+  }
+}
