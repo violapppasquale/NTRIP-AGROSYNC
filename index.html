@@ -1272,7 +1272,7 @@
 
     // ======== NTRIP: connessione al bridge e inoltro RTCM → seriale ========
     function connectNTRIP() {
-      const bridgeURL = $('ntripBridge').value.trim() || 'ws://localhost:8081';
+      const bridgeURL = $('ntripBridge').value.trim() || 'wss://ntrip-agrosync.onrender.com';  
       const host = $('ntripHost').value.trim();
       const port = Number($('ntripPort').value) || 2101;
       const mount = $('ntripMount').value.trim();
@@ -1333,3 +1333,4 @@
   </script>
 </body>
 </html>
+
